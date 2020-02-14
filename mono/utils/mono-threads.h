@@ -677,4 +677,8 @@ void
 mono_win32_interrupt_wait (PVOID thread_info, HANDLE native_thread_handle, DWORD tid);
 #endif
 
+MONO_API int
+mono_get_thread_dump (unsigned char* buffer, int bufferSize);
+
+
 #endif /* __MONO_THREADS_H__ */

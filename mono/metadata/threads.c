@@ -3603,6 +3603,91 @@ get_thread_dump (MonoThreadInfo *info, gpointer ud)
 	return MonoResumeThread;
 }
 
+typedef struct QuickDumpUserData {
+	char *bufp;
+	char *maxp;
+} QuickDumpUserData;
+
+static void
+append_quick (QuickDumpUserData *ud, const char *str)
+{
+	int len = (int)strlen (str);
+	int remain = (int)(ud->maxp - ud->bufp);
+	int copylen = len;
+	if (copylen > remain)
+		copylen = remain;
+	memcpy (ud->bufp, str, copylen);
+	ud->bufp += copylen;
+}
+
+static int
+append_parent_types (QuickDumpUserData *ud, const MonoClass *k)
+{
+	if (!k)
+		return 0;
+
+	if (append_parent_types (ud, k->parent)) {
+		append_quick (ud, ".");
+	}
+
+	append_quick (ud, k->name);
+	return 1;
+}
+
+static mono_bool
+collect_frame_text (MonoMethod *method, int32_t native_offset, int32_t il_offset, mono_bool managed, void *data)
+{
+	QuickDumpUserData *ud = (QuickDumpUserData *)data;
+
+	if (managed && method) {
+		char *method_name = mono_method_full_name (method, TRUE);
+		append_quick (ud, method_name);
+		g_free (method_name);
+
+		gboolean skip_lines = FALSE;
+
+		if (0 == strcmp (method->klass->name_space, "UnityEngine")) {
+			skip_lines =
+				0 == strcmp (method->klass->name, "Debug") ||
+				0 == strcmp (method->klass->name, "Logger") ||
+				0 == strcmp (method->klass->name, "DebugLogHandler") ||
+				(0 == strcmp (method->klass->name, "MonoBehaviour") && 0 == strcmp (method->name, "print"));
+		} else if (0 == strcmp (method->klass->name_space, "UnityEngine.Assertions")) {
+			skip_lines =
+				0 == strcmp (method->klass->name, "Assert");
+		}
+
+		if (!skip_lines) {
+			MonoDebugMethodInfo *minfo = mono_debug_lookup_method (method);
+			if (minfo) {
+				MonoDebugSourceLocation *src_loc = mono_debug_method_lookup_location (minfo, il_offset);
+				if (src_loc && src_loc->source_file) {
+					append_quick (ud, " (at ");
+					append_quick (ud, src_loc->source_file);
+					append_quick (ud, ":");
+					char buf[32];
+					snprintf (buf, sizeof buf, "%d", src_loc->row);
+					append_quick (ud, buf);
+					append_quick (ud, ")");
+				}
+			}
+		}
+		append_quick (ud, "\n");
+	}
+
+	return ud->bufp == ud->maxp;
+}
+
+MONO_API int
+mono_get_thread_dump (unsigned char *buffer, int bufferSize)
+{
+	QuickDumpUserData ud = {buffer, buffer + bufferSize - 1};
+
+	mono_stack_walk (collect_frame_text, &ud);
+
+	return (int)(ud.bufp - buffer);
+}
+
 typedef struct {
 	int nthreads, max_threads;
 	MonoInternalThread **threads;
